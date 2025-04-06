@@ -1,0 +1,13 @@
+[package]
+name = "statcat"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.35", features = ["derive"] }
+serenity = "0.12.4"
+tokio = { version = "1.44.1", features = ["rt", "rt-multi-thread", "macros"] }
+anyhow = "1.0.97"
+rusqlite = {version="0.34.0", features = ["bundled"] }
+chrono = "0.4.40"
+charming = { version = "0.4.0", features = ["ssr"] }
