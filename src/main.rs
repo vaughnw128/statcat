@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 use anyhow;
 use chrono::{DateTime, Utc};
 use clap::{arg, ArgMatches, Command, Parser};
@@ -12,6 +13,9 @@ use charming::{component::{
     Axis, DataZoom, DataZoomType, Feature, Restore, SaveAsImage, Title, Toolbox,
     ToolboxDataZoom,
 }, element::{AreaStyle, AxisType, Color, ColorStop, LineStyle, Symbol, Tooltip, Trigger}, series::Line, Chart, HtmlRenderer};
+use charming::element::ItemStyle;
+use charming::series::Bar;
+use charming::theme::Theme;
 use chrono::{Days, NaiveDate};
 
 fn cli() -> Command {
@@ -31,6 +35,12 @@ fn cli() -> Command {
                 .about("Gets word statistics")
                 .arg(arg!(<GUILD_ID> "The guild to check word statistics on"))
                 .arg(arg!(<WORD> "The word or phrase to grab statistics of"))
+                .arg_required_else_help(true),
+        )
+    .subcommand(
+            Command::new("frequency")
+                .about("Gets word frequency statistics")
+                .arg(arg!(<GUILD_ID> "The guild to check word statistics on"))
                 .arg_required_else_help(true),
         )
 }
@@ -249,6 +259,72 @@ fn word_chart(db_connection: &mut Connection, guild_id: GuildId, word: String) -
     Ok(())
 }
 
+fn frequency_chart(db_connection: &mut Connection, guild_id: GuildId) -> anyhow::Result<()> {
+    let mut words: HashMap<String, i32> = HashMap::new();
+    let messages = get_all_messages(db_connection, guild_id);
+
+    for message in messages {
+        for word in message.content.split(" ") {
+            words
+                .entry({
+                    let mut tmpword = word.to_lowercase();
+                    tmpword.retain(|c| !r#"(),".;:'"#.contains(c));
+                    if tmpword.trim().is_empty() {
+                        continue
+                    }
+                    tmpword
+                })
+                .and_modify(|count| *count += 1)
+                .or_insert(0);
+        }
+    }
+
+    // Use a BTree to sort the words and then reverse them
+    let sorted_words: BTreeMap<i32,String> = words.iter().map(|(k,v)| (v.to_owned(),k.to_owned())).collect();
+
+    let chart = Chart::new()
+            .tooltip(Tooltip::new().trigger(Trigger::Axis))
+            .title(Title::new().left("center").text(format!("Word Frequency Chart")))
+            .toolbox(
+                Toolbox::new().feature(
+                    Feature::new()
+                        .data_zoom(ToolboxDataZoom::new().y_axis_index("none"))
+                        .restore(Restore::new())
+                        .save_as_image(SaveAsImage::new()),
+                ),
+            )
+            .x_axis(
+                Axis::new()
+                    .type_(AxisType::Category)
+                    .boundary_gap(false)
+                    .data(sorted_words.values().rev().collect()),
+            )
+            .y_axis(Axis::new().type_(AxisType::Value))
+            .data_zoom(DataZoom::new().type_(DataZoomType::Inside).start(0).end(10))
+            .data_zoom(DataZoom::new().start(0).end(10))
+            .series(
+                Bar::new()
+                    .item_style(ItemStyle::new().color(Color::LinearGradient {
+                        x: 0.,
+                        y: 0.,
+                        x2: 0.,
+                        y2: 1.,
+                        color_stops: vec![
+                        ColorStop::new(0, "rgb(43, 57, 214)"),
+                        ColorStop::new(1, "rgb(169, 35, 222)"),
+                    ],
+                }))
+                .data(sorted_words.keys().map(|count| count.to_owned()).rev().collect()),
+        );
+
+    // Chart dimension 1000x800.
+    let mut renderer = HtmlRenderer::new("Word Frequency Chart", 1000, 800).theme(Theme::Westeros);
+    renderer.save(&chart, "./charts/words.html")?;
+
+    Ok(())
+}
+
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Match on the CLI arguments
@@ -281,6 +357,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(("word", sub_matches)) => {
             word_chart(&mut db_connection, GuildId::new(sub_matches.get_one::<String>("GUILD_ID").expect("Expected a guild id").to_owned().parse()?), sub_matches.get_one::<String>("WORD").expect("Expected a word").to_string())
+        }
+        Some(("frequency", sub_matches)) => {
+            frequency_chart(&mut db_connection, GuildId::new(sub_matches.get_one::<String>("GUILD_ID").expect("Expected a guild id").to_owned().parse()?))
         }
         _ => Ok(())
     }
